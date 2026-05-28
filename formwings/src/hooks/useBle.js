@@ -9,6 +9,7 @@ const MAX_LOG_LINES = 50000;
 const MAX_BUFFER_CHARS = 12000;
 const PREDICTION_START = '{"type":"running_form_prediction"';
 const WINDOW_QUIET_MS = 350;
+const PARTIAL_REPAIR_QUIET_MS = 220;
 
 function getBluetoothSupportMessage() {
   if (!window.isSecureContext) {
@@ -124,6 +125,7 @@ export function useBle() {
   const lastPartial = useRef("");
   const pendingPrediction = useRef(null);
   const pendingTimer = useRef(null);
+  const partialRepairTimer = useRef(null);
 
   // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -131,6 +133,7 @@ export function useBle() {
     clearTimeout(staleTimer.current);
     clearTimeout(reconnTimer.current);
     clearTimeout(pendingTimer.current);
+    clearTimeout(partialRepairTimer.current);
   };
 
   const armStaleTimer = useCallback(() => {
@@ -169,6 +172,24 @@ export function useBle() {
     if (raw) setLatest(processor.current.process(raw));
   }, [appendLogLine]);
 
+  const schedulePartialRepair = useCallback((text) => {
+    clearTimeout(partialRepairTimer.current);
+    partialRepairTimer.current = setTimeout(() => {
+      const nextPrediction = text.indexOf(PREDICTION_START, 1);
+      const repairSource = nextPrediction > 0 ? text.slice(0, nextPrediction) : text;
+      const repaired = tryRepairPartialJson(repairSource);
+      if (repaired && repaired !== lastPartial.current) {
+        lastPartial.current = repaired;
+        dispatchJson(repaired);
+      }
+
+      if (nextPrediction > 0) {
+        bleBuffer.current = text.slice(nextPrediction);
+        lastPartial.current = "";
+      }
+    }, PARTIAL_REPAIR_QUIET_MS);
+  }, [dispatchJson]);
+
   const consumeBufferedJson = useCallback(() => {
     let buf = bleBuffer.current;
     const start = buf.indexOf("{");
@@ -189,6 +210,7 @@ export function useBle() {
         JSON.parse(candidate);
         bleBuffer.current = buf.slice(completeEnd + 1);
         lastPartial.current = "";
+        clearTimeout(partialRepairTimer.current);
         dispatchJson(candidate);
         return;
       } catch {
@@ -197,22 +219,19 @@ export function useBle() {
     }
 
     const nextPrediction = buf.indexOf(PREDICTION_START, 1);
-    const repairSource = nextPrediction > 0 ? buf.slice(0, nextPrediction) : buf;
-    const repaired = tryRepairPartialJson(repairSource);
-    if (repaired && repaired !== lastPartial.current) {
-      lastPartial.current = repaired;
-      dispatchJson(repaired);
-    }
-
     if (nextPrediction > 0) {
+      schedulePartialRepair(buf.slice(0, nextPrediction));
       bleBuffer.current = buf.slice(nextPrediction);
       lastPartial.current = "";
     } else if (buf.length > MAX_BUFFER_CHARS) {
       const keepFrom = Math.max(0, buf.lastIndexOf(PREDICTION_START));
       bleBuffer.current = keepFrom > 0 ? buf.slice(keepFrom) : "";
       lastPartial.current = "";
+      clearTimeout(partialRepairTimer.current);
+    } else {
+      schedulePartialRepair(buf);
     }
-  }, [dispatchJson]);
+  }, [dispatchJson, schedulePartialRepair]);
 
   const subscribeChar = useCallback(async (char) => {
     bleBuffer.current = "";
@@ -325,6 +344,7 @@ export function useBle() {
     lastPartial.current = "";
     pendingPrediction.current = null;
     clearTimeout(pendingTimer.current);
+    clearTimeout(partialRepairTimer.current);
     if (deviceRef.current?.gatt?.connected) {
       deviceRef.current.gatt.disconnect();
     }
