@@ -40,6 +40,7 @@ export function parsePrediction(text) {
   try {
     const p = JSON.parse(text);
     if (p.type !== "running_form_prediction") return null;
+    if (!p.features || p.class == null) return null;
 
     const f  = p.features    ?? {};
     const d  = p.diagnostics ?? {};

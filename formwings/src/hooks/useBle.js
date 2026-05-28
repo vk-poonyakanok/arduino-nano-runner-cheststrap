@@ -107,6 +107,15 @@ function tryRepairPartialJson(text) {
   return null;
 }
 
+function isPredictionHeaderOnly(text) {
+  try {
+    const p = JSON.parse(text);
+    return p.type === "running_form_prediction" && !p.features && p.class == null;
+  } catch {
+    return false;
+  }
+}
+
 export function useBle() {
   const [status, setStatus] = useState("disconnected"); // "connected"|"stale"|"disconnected"
   const [device, setDevice] = useState(null);
@@ -151,9 +160,9 @@ export function useBle() {
   }, []);
 
   const dispatchJson = useCallback((json) => {
-    appendLogLine(json);
     const prediction = parsePrediction(json);
     if (prediction) {
+      appendLogLine(json);
       const windowId = prediction.windowId;
       if (windowId == null) {
         setLatest(prediction);
@@ -169,7 +178,10 @@ export function useBle() {
       return;
     }
     const raw = parseRaw(json);
-    if (raw) setLatest(processor.current.process(raw));
+    if (raw) {
+      appendLogLine(json);
+      setLatest(processor.current.process(raw));
+    }
   }, [appendLogLine]);
 
   const schedulePartialRepair = useCallback((text) => {
@@ -208,6 +220,11 @@ export function useBle() {
       const candidate = buf.slice(0, completeEnd + 1);
       try {
         JSON.parse(candidate);
+        if (isPredictionHeaderOnly(candidate)) {
+          bleBuffer.current = candidate.slice(0, -1) + buf.slice(completeEnd + 1);
+          schedulePartialRepair(bleBuffer.current);
+          return;
+        }
         bleBuffer.current = buf.slice(completeEnd + 1);
         lastPartial.current = "";
         clearTimeout(partialRepairTimer.current);
