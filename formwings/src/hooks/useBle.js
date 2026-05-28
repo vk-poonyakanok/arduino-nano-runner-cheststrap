@@ -8,6 +8,7 @@ const RECENT_LOG_LINES = 20;
 const MAX_LOG_LINES = 50000;
 const MAX_BUFFER_CHARS = 12000;
 const PREDICTION_START = '{"type":"running_form_prediction"';
+const COMPACT_PREDICTION_START = '{"t":"p"';
 const WINDOW_QUIET_MS = 350;
 const PARTIAL_REPAIR_QUIET_MS = 220;
 
@@ -63,7 +64,7 @@ function findCompleteJsonEnd(text) {
 }
 
 function tryRepairPartialJson(text) {
-  if (!text.startsWith("{") || !text.includes('"class"')) return null;
+  if (!text.startsWith("{") || (!text.includes('"class"') && !text.includes('"f"'))) return null;
 
   const candidates = [`${text}}`];
   let depth = 0;
@@ -114,6 +115,14 @@ function isPredictionHeaderOnly(text) {
   } catch {
     return false;
   }
+}
+
+function findNextPredictionStart(text, startIndex = 1) {
+  const full = text.indexOf(PREDICTION_START, startIndex);
+  const compact = text.indexOf(COMPACT_PREDICTION_START, startIndex);
+  if (full === -1) return compact;
+  if (compact === -1) return full;
+  return Math.min(full, compact);
 }
 
 export function useBle() {
@@ -187,7 +196,7 @@ export function useBle() {
   const schedulePartialRepair = useCallback((text) => {
     clearTimeout(partialRepairTimer.current);
     partialRepairTimer.current = setTimeout(() => {
-      const nextPrediction = text.indexOf(PREDICTION_START, 1);
+      const nextPrediction = findNextPredictionStart(text, 1);
       const repairSource = nextPrediction > 0 ? text.slice(0, nextPrediction) : text;
       const repaired = tryRepairPartialJson(repairSource);
       if (repaired && repaired !== lastPartial.current) {
@@ -235,13 +244,13 @@ export function useBle() {
       }
     }
 
-    const nextPrediction = buf.indexOf(PREDICTION_START, 1);
+    const nextPrediction = findNextPredictionStart(buf, 1);
     if (nextPrediction > 0) {
       schedulePartialRepair(buf.slice(0, nextPrediction));
       bleBuffer.current = buf.slice(nextPrediction);
       lastPartial.current = "";
     } else if (buf.length > MAX_BUFFER_CHARS) {
-      const keepFrom = Math.max(0, buf.lastIndexOf(PREDICTION_START));
+      const keepFrom = Math.max(0, buf.lastIndexOf(PREDICTION_START), buf.lastIndexOf(COMPACT_PREDICTION_START));
       bleBuffer.current = keepFrom > 0 ? buf.slice(keepFrom) : "";
       lastPartial.current = "";
       clearTimeout(partialRepairTimer.current);

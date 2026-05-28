@@ -56,65 +56,118 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _round_number(value: object, digits: int = 3) -> float:
-    return round(float(value), digits)
+DOMINANT_FEATURE_CODES = {
+    "cadence_spm": "c",
+    "vertical_oscillation_cm": "vo",
+    "gct_flight_balance_ms": "gb",
+    "impact_loading_rate_bw_s": "lr",
+    "trunk_forward_lean_deg": "ln",
+    "left_right_asymmetry_pct": "la",
+    "heel_strike_likelihood": "hs",
+}
+
+RISK_STATE_CODES = {
+    "Normal": "n",
+    "Caution": "c",
+    "Warning": "w",
+    "Danger": "d",
+}
+
+ENV_STATUS_CODES = {
+    "ok": "ok",
+    "unavailable": "u",
+    "stale": "s",
+}
 
 
-def _rounded_mapping(values: object, digits: int = 3) -> dict[str, float]:
-    if not isinstance(values, dict):
-        return {}
-    output: dict[str, float] = {}
-    for key, value in values.items():
-        try:
-            output[str(key)] = _round_number(value, digits)
-        except (TypeError, ValueError):
-            continue
-    return output
-
-
-def _compact_device_trigger(trigger: object) -> dict[str, object] | None:
-    if not isinstance(trigger, dict):
+def _compact_number(value: object, digits: int) -> float | int | None:
+    try:
+        rounded = round(float(value), digits)
+    except (TypeError, ValueError):
         return None
-    output: dict[str, object] = {}
-    for key in ("severity", "code", "metric", "value", "threshold"):
-        if key in trigger:
-            output[key] = trigger[key]
-    return output
+    if rounded == int(rounded):
+        return int(rounded)
+    return rounded
 
 
-def _ble_payload_without_verbose_text(payload: dict[str, object]) -> dict[str, object]:
-    """Return a smaller BLE payload; full payload is still written to local logs."""
+def _put_number(output: dict[str, object], key: str, value: object, digits: int) -> None:
+    compact = _compact_number(value, digits)
+    if compact is not None:
+        output[key] = compact
+
+
+def _compact_live_payload(payload: dict[str, object]) -> dict[str, object]:
+    """Return the smallest BLE live packet; local logs still keep the full schema."""
+
+    features = payload.get("features")
+    if not isinstance(features, dict):
+        features = {}
+    diagnostics = payload.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    probabilities = payload.get("probabilities")
+    if not isinstance(probabilities, dict):
+        probabilities = {}
 
     output: dict[str, object] = {
-        "type": payload.get("type"),
-        "window_id": payload.get("window_id"),
-        "timestamp_s": payload.get("timestamp_s"),
-        "features": _rounded_mapping(payload.get("features"), 2),
-        "diagnostics": _rounded_mapping(payload.get("diagnostics"), 2),
-        "class": payload.get("class"),
-        "probabilities": _rounded_mapping(payload.get("probabilities"), 4),
-        "dominant_feature": payload.get("dominant_feature"),
+        "t": "p",
+        "f": 0 if payload.get("class") == "Good" else 1,
     }
+    if payload.get("window_id") is not None:
+        output["w"] = payload.get("window_id")
 
-    priority_trigger = _compact_device_trigger(payload.get("priority_trigger"))
-    if priority_trigger:
-        output["priority_trigger"] = priority_trigger
+    _put_number(output, "ts", payload.get("timestamp_s"), 2)
+    _put_number(output, "c", features.get("cadence_spm"), 1)
+    _put_number(output, "vo", features.get("vertical_oscillation_cm"), 2)
+    _put_number(output, "gb", features.get("gct_flight_balance_ms"), 1)
+    _put_number(output, "lr", features.get("impact_loading_rate_bw_s"), 2)
+    _put_number(output, "ln", features.get("trunk_forward_lean_deg"), 1)
+    _put_number(output, "la", features.get("left_right_asymmetry_pct"), 1)
+    _put_number(output, "hs", features.get("heel_strike_likelihood"), 2)
+    _put_number(output, "g", diagnostics.get("gct_ms"), 1)
+    _put_number(output, "ft", diagnostics.get("flight_time_ms"), 1)
+    _put_number(output, "pf", diagnostics.get("peak_vgrf_bw_estimate"), 2)
+    _put_number(output, "tp", diagnostics.get("footstrike_time_to_peak_ms"), 1)
+    _put_number(output, "fb", diagnostics.get("fallback_window"), 0)
+    _put_number(output, "ds", diagnostics.get("detected_step_events"), 0)
+    _put_number(output, "pg", probabilities.get("Good"), 3)
+    _put_number(output, "pb", probabilities.get("Bad Form"), 3)
+
+    dominant_feature = payload.get("dominant_feature")
+    if dominant_feature in DOMINANT_FEATURE_CODES:
+        output["df"] = DOMINANT_FEATURE_CODES[dominant_feature]
+
+    priority_trigger = payload.get("priority_trigger")
+    if isinstance(priority_trigger, dict):
+        severity = priority_trigger.get("severity")
+        code = priority_trigger.get("code")
+        if severity:
+            output["ps"] = str(severity).lower()
+        if code:
+            output["pc"] = code
+        _put_number(output, "pv", priority_trigger.get("value"), 2)
+        _put_number(output, "px", priority_trigger.get("threshold"), 2)
 
     environment = payload.get("environment")
     if isinstance(environment, dict) and environment.get("status") != "unavailable":
-        output["environment"] = {
-            key: environment[key]
-            for key in ("status", "temperature_c", "humidity_pct", "heat_index_c", "risk_state", "risk_score", "age_s")
-            if key in environment
-        }
+        output["st"] = ENV_STATUS_CODES.get(str(environment.get("status")), str(environment.get("status", ""))[:1])
+        _put_number(output, "et", environment.get("temperature_c"), 1)
+        _put_number(output, "eh", environment.get("humidity_pct"), 0)
+        _put_number(output, "ei", environment.get("heat_index_c"), 1)
+        risk_state = environment.get("risk_state")
+        if risk_state:
+            output["er"] = RISK_STATE_CODES.get(str(risk_state), str(risk_state)[:1].lower())
+        _put_number(output, "es", environment.get("risk_score"), 0)
+        _put_number(output, "ea", environment.get("age_s"), 1)
 
     recommendation = payload.get("recommendation")
     if isinstance(recommendation, dict):
-        output["recommendation"] = {
-            key: recommendation[key]
-            for key in ("severity", "code")
-            if key in recommendation
-        }
+        severity = recommendation.get("severity")
+        code = recommendation.get("code")
+        if severity:
+            output["rs"] = str(severity).lower()
+        if code:
+            output["rc"] = code
 
     return output
 
@@ -122,7 +175,7 @@ def _ble_payload_without_verbose_text(payload: dict[str, object]) -> dict[str, o
 def _send_mcu_payload(payload: dict[str, object]) -> dict[str, object]:
     """Send the full dashboard payload as small BLE notification chunks."""
 
-    payload = _ble_payload_without_verbose_text(payload)
+    payload = _compact_live_payload(payload)
     compact = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), default=str)
     chunks = [
         compact[index : index + MCU_BLE_CHUNK_DATA_SIZE]

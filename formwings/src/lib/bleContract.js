@@ -27,9 +27,112 @@ const HINT_MAP = {
   heel_strike_high:     "Land on midfoot",
 };
 
+const COMPACT_DOMINANT_FEATURES = {
+  c:  "cadence_spm",
+  vo: "vertical_oscillation_cm",
+  gb: "gct_flight_balance_ms",
+  lr: "impact_loading_rate_bw_s",
+  ln: "trunk_forward_lean_deg",
+  la: "left_right_asymmetry_pct",
+  hs: "heel_strike_likelihood",
+};
+
+const COMPACT_RISK_STATES = {
+  n: "Normal",
+  c: "Caution",
+  w: "Warning",
+  d: "Danger",
+};
+
+const COMPACT_ENV_STATUS = {
+  ok: "ok",
+  u:  "unavailable",
+  s:  "stale",
+};
+
+const SEVERITY_FROM_COMPACT = {
+  ok:    "OK",
+  warn:  "WARN",
+  alert: "ALERT",
+  crit:  "CRIT",
+};
+
+const DEVICE_MESSAGE_FROM_CODE = {
+  thermal_ok:      "Thermal conditions look normal.",
+  heat_caution:    "Warm humid conditions; control pace and hydrate.",
+  heat_warning:    "Heat risk elevated; reduce pace and avoid hard intervals.",
+  heat_critical:   "Heat risk high; slow down, hydrate, and consider stopping.",
+  thermal_stale:   "Thermal reading is stale.",
+  thermal_missing: "Thermal sensor unavailable.",
+};
+
 export function hintFromCode(code) {
   if (!code) return null;
   return HINT_MAP[code] ?? null;
+}
+
+function severityFromCompact(value) {
+  return SEVERITY_FROM_COMPACT[value] ?? value ?? "OK";
+}
+
+function messageFromCode(code) {
+  return DEVICE_MESSAGE_FROM_CODE[code] ?? "Thermal warning";
+}
+
+function parseCompactPrediction(p) {
+  if (p.t !== "p" || p.f == null) return null;
+
+  const riskState = COMPACT_RISK_STATES[p.er] ?? p.er ?? "Unknown";
+  const recSeverity = severityFromCompact(p.rs);
+  const envStatus = COMPACT_ENV_STATUS[p.st] ?? p.st ?? "ok";
+  const hasEnv = p.et != null || p.eh != null || p.ei != null || p.er != null || p.es != null;
+  const envData = hasEnv ? {
+    temperature_c: p.et,
+    humidity_pct:  p.eh,
+    heat_index_c:  p.ei,
+    risk_state:    riskState,
+    risk_score:    p.es ?? 0,
+  } : null;
+
+  const isSensorError = Boolean(hasEnv && envStatus !== "ok");
+  const showBanner = recSeverity === "CRIT" || isSensorError;
+  const envAlert = showBanner
+    ? {
+        severity:  isSensorError ? "WARN" : recSeverity,
+        state:     riskState,
+        message:   messageFromCode(p.rc),
+        heatIndex: p.ei ?? null,
+        riskScore: p.es ?? null,
+      }
+    : null;
+
+  const dominantFeature = COMPACT_DOMINANT_FEATURES[p.df] ?? null;
+
+  return {
+    windowId: p.w ?? null,
+    timestamp: (p.ts ?? Date.now() / 1000) * 1000,
+    c:     p.c  ?? 0,
+    vo:    p.vo ?? 0,
+    gct:   p.g  ?? 0,
+    vgrf:  p.lr ?? 0,
+    vgrf2: p.pf ?? 0,
+    lean:  p.ln ?? 0,
+    asym:  p.la ?? 0,
+    fs:    (p.hs ?? 0) > 0.5 ? 1 : 0,
+    form:  p.f,
+    flightTime:     p.ft ?? 0,
+    gctBalance:     p.gb ?? ((p.g ?? 0) - (p.ft ?? 0)),
+    ttoPeak:        p.tp ?? 0,
+    heelLikelihood: p.hs ?? 0,
+    attn: ATTN_KEYS.map(() => 0),
+    dominantFeature,
+    featureContributions: null,
+    hint: hintFromCode(p.pc),
+    fallback: (p.ds ?? 1) <= 0 && (p.fb ?? 0) >= 1,
+    envData,
+    envAlert,
+    probabilities: p.pg != null || p.pb != null ? { Good: p.pg ?? 0, "Bad Form": p.pb ?? 0 } : null,
+  };
 }
 
 /**
@@ -39,6 +142,9 @@ export function hintFromCode(code) {
 export function parsePrediction(text) {
   try {
     const p = JSON.parse(text);
+    const compact = parseCompactPrediction(p);
+    if (compact) return compact;
+
     if (p.type !== "running_form_prediction") return null;
     if (!p.features || p.class == null) return null;
 
