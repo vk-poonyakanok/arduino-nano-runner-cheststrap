@@ -13,6 +13,7 @@ export function useSession() {
   const historyRef  = useRef([]);
   const timerRef    = useRef(null);
   const lastPktTs   = useRef(null);
+  const lastWindowId = useRef(null);
 
   const startSession = useCallback(() => {
     setRunning(true);
@@ -28,6 +29,7 @@ export function useSession() {
     historyRef.current      = [];
     fullHistoryRef.current  = [];
     lastPktTs.current       = null;
+    lastWindowId.current    = null;
     setElapsed(0);
     setDistance(0);
     setHistory([]);
@@ -50,6 +52,9 @@ export function useSession() {
   const fullHistoryRef = useRef([]);
 
   const recordPacket = useCallback((packet, formState) => {
+    if (packet.windowId != null && packet.windowId === lastWindowId.current) return;
+    if (packet.windowId != null) lastWindowId.current = packet.windowId;
+
     const entry = { ...packet, formState, ts: Date.now() };
     const next = [...historyRef.current, entry].slice(-60);
     historyRef.current = next;

@@ -8,6 +8,7 @@ const RECENT_LOG_LINES = 20;
 const MAX_LOG_LINES = 50000;
 const MAX_BUFFER_CHARS = 12000;
 const PREDICTION_START = '{"type":"running_form_prediction"';
+const WINDOW_QUIET_MS = 350;
 
 function getBluetoothSupportMessage() {
   if (!window.isSecureContext) {
@@ -121,12 +122,15 @@ export function useBle() {
   const bleBuffer   = useRef("");        // fallback: raw byte accumulator
   const bleFrames   = useRef(new Map()); // framing protocol: msgId → {chunks, totalChunks}
   const lastPartial = useRef("");
+  const pendingPrediction = useRef(null);
+  const pendingTimer = useRef(null);
 
   // ── helpers ───────────────────────────────────────────────────────────────
 
   const clearTimers = () => {
     clearTimeout(staleTimer.current);
     clearTimeout(reconnTimer.current);
+    clearTimeout(pendingTimer.current);
   };
 
   const armStaleTimer = useCallback(() => {
@@ -146,7 +150,21 @@ export function useBle() {
   const dispatchJson = useCallback((json) => {
     appendLogLine(json);
     const prediction = parsePrediction(json);
-    if (prediction) { setLatest(prediction); return; }
+    if (prediction) {
+      const windowId = prediction.windowId;
+      if (windowId == null) {
+        setLatest(prediction);
+        return;
+      }
+
+      pendingPrediction.current = prediction;
+      clearTimeout(pendingTimer.current);
+      pendingTimer.current = setTimeout(() => {
+        if (pendingPrediction.current) setLatest(pendingPrediction.current);
+        pendingPrediction.current = null;
+      }, WINDOW_QUIET_MS);
+      return;
+    }
     const raw = parseRaw(json);
     if (raw) setLatest(processor.current.process(raw));
   }, [appendLogLine]);
@@ -305,6 +323,8 @@ export function useBle() {
     bleBuffer.current = "";
     bleFrames.current.clear();
     lastPartial.current = "";
+    pendingPrediction.current = null;
+    clearTimeout(pendingTimer.current);
     if (deviceRef.current?.gatt?.connected) {
       deviceRef.current.gatt.disconnect();
     }

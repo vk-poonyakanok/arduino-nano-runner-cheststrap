@@ -76,6 +76,7 @@ export function parsePrediction(text) {
 
     return {
       // Standard metric fields
+      windowId: p.window_id ?? null,
       timestamp: (p.timestamp_s ?? Date.now() / 1000) * 1000,
       c:     f.cadence_spm              ?? 0,
       vo:    f.vertical_oscillation_cm  ?? 0,
