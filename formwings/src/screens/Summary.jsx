@@ -1,3 +1,10 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  buildSessionRow,
+  getPendingUploadCount,
+  uploadSessionRow,
+} from "../lib/sessionUpload";
+
 const C = {
   good: "#10B981",
   bad:  "#EF4444",
@@ -132,13 +139,81 @@ const METRIC_DEFS = [
   },
 ];
 
-export function Summary({ history, fullHistory = [], goodCount, badCount, elapsedFmt, distance, onNavigate }) {
+export function Summary({
+  history,
+  fullHistory = [],
+  goodCount,
+  badCount,
+  sessionId,
+  startedAt,
+  endedAt,
+  elapsed,
+  elapsedFmt,
+  distance,
+  mode,
+  onNavigate,
+}) {
   const total   = goodCount + badCount || 1;
   const goodPct = Math.round((goodCount / total) * 100);
   const isGood  = goodPct >= 70;
+  const uploadAttemptRef = useRef(null);
+  const [uploadState, setUploadState] = useState({
+    status: "idle",
+    message: "Preparing session upload",
+    pending: getPendingUploadCount(),
+  });
+
+  const sessionRow = useMemo(() => buildSessionRow({
+    sessionId,
+    startedAt,
+    endedAt,
+    elapsed,
+    distance,
+    goodCount,
+    badCount,
+    fullHistory,
+    mode,
+  }), [badCount, distance, elapsed, endedAt, fullHistory, goodCount, mode, sessionId, startedAt]);
+
+  const uploadCurrentSession = useCallback(async () => {
+    if (!sessionRow.packet_count) {
+      setUploadState({
+        status: "empty",
+        message: "No telemetry packets to save",
+        pending: getPendingUploadCount(),
+      });
+      return;
+    }
+
+    setUploadState({
+      status: "saving",
+      message: "Saving session to Supabase",
+      pending: getPendingUploadCount(),
+    });
+    const result = await uploadSessionRow(sessionRow);
+    setUploadState({
+      status: result.ok ? "saved" : result.status,
+      message: result.message,
+      pending: getPendingUploadCount(),
+    });
+  }, [sessionRow]);
+
+  useEffect(() => {
+    if (uploadAttemptRef.current === sessionRow.session_id) return;
+    uploadAttemptRef.current = sessionRow.session_id;
+    uploadCurrentSession();
+  }, [sessionRow.session_id, uploadCurrentSession]);
 
   const avgOf = (key) =>
     history.length ? history.reduce((s, p) => s + (p[key] ?? 0), 0) / history.length : 0;
+
+  const uploadTone = (() => {
+    if (uploadState.status === "saved") return { color: C.good, bg: "rgba(16,185,129,0.08)", border: "rgba(16,185,129,0.25)", label: "Saved" };
+    if (uploadState.status === "saving") return { color: C.teal, bg: "rgba(6,182,212,0.08)", border: "rgba(6,182,212,0.25)", label: "Saving" };
+    if (uploadState.status === "queued") return { color: C.warn, bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.28)", label: "Queued" };
+    if (uploadState.status === "empty") return { color: C.muted, bg: "rgba(139,174,200,0.07)", border: "rgba(139,174,200,0.18)", label: "No Data" };
+    return { color: C.muted, bg: "rgba(255,255,255,0.03)", border: "rgba(255,255,255,0.08)", label: "Ready" };
+  })();
 
   function makeSvgTimeline(data) {
     if (!data.length) return "";
@@ -264,6 +339,28 @@ export function Summary({ history, fullHistory = [], goodCount, badCount, elapse
   return (
     <main className="min-h-screen bg-[#030712] text-white p-6 max-pt-[max(24px,env(safe-area-inset-top))] max-pb-[max(24px,env(safe-area-inset-bottom))] flex flex-col gap-4.5 select-none">
       <h1 className="margin-0 text-xl font-black uppercase tracking-tight">Run Summary</h1>
+
+      <div
+        className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 border"
+        style={{ background: uploadTone.bg, borderColor: uploadTone.border }}
+      >
+        <div className="min-w-0">
+          <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: uploadTone.color }}>
+            Supabase {uploadTone.label}
+          </div>
+          <div className="text-xs font-semibold text-[rgba(255,255,255,0.58)] truncate">
+            {uploadState.message}{uploadState.pending > 0 ? ` · ${uploadState.pending} queued` : ""}
+          </div>
+        </div>
+        {uploadState.status === "queued" && (
+          <button
+            onClick={uploadCurrentSession}
+            className="h-8 px-3 rounded-lg bg-[rgba(255,255,255,0.08)] border border-[rgba(255,255,255,0.12)] text-white text-[10px] font-black uppercase tracking-widest"
+          >
+            Retry
+          </button>
+        )}
+      </div>
 
       {/* Modern Circular Progress Ring form score card */}
       <div 

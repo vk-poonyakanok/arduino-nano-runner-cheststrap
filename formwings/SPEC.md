@@ -162,29 +162,46 @@ This function is the seam: swap for model inference without changing callers.
 
 ---
 
-## 7. Supabase Integration (planned)
+## 7. Supabase Integration
 
 Schema: `athlete_sessions`
 
 ```sql
 user_id        uuid references auth.users
 session_id     uuid default gen_random_uuid()
+mode           text  -- 'demo' | 'ble'
 started_at     timestamptz
 ended_at       timestamptz
+duration_s     integer
 distance_km    float4
 good_pct       float4
+good_windows   integer
+bad_windows    integer
+packet_count   integer
 avg_cadence    float4
 avg_vo_cm      float4
 avg_gct_ms     float4
 avg_vgrf_bw    float4
+avg_peak_vgrf_bw float4
 avg_lean_deg   float4
 avg_asym_pct   float4
+avg_heel_likelihood float4
 foot_strike_dominant  text  -- 'heel' | 'midfoot'
+environment_summary jsonb
 packets        jsonb  -- raw history array
 ```
 
-Upload trigger: user taps **End** → `pauseSession()` → navigate("summary") → POST to Supabase.  
-RLS policy: `user_id = auth.uid()`.
+Upload trigger: user taps **End** → `finishSession()` → navigate("summary") → POST to Supabase.
+If env vars or network are unavailable, the dashboard queues the session in `localStorage` and retries from Summary.
+
+Environment variables:
+```bash
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+```
+
+Migration: `../supabase/migrations/20260529000000_create_athlete_sessions.sql`.
+RLS policy: anonymous demo inserts are allowed with `user_id is null`; authenticated inserts/read use `user_id = auth.uid()`.
 
 ---
 
@@ -227,7 +244,7 @@ Bouncing on `bodyBob` at full stride period (`strideSec = 60 / cadence`).
   Chrome, then accept the local certificate warning.
 - Distance is estimated (cadence × avg stride length), not GPS
 - `attn` field in payload not yet implemented on UNO Q firmware — UI degrades gracefully
-- Supabase upload not yet wired (session data stays local in this release)
+- Supabase upload needs the `athlete_sessions` migration plus `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`
 - Audio alerts blocked by browser autoplay policy until user interaction
 
 ---

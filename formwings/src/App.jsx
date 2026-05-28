@@ -23,7 +23,7 @@ export default function App() {
   }
 
   function navigate(to) {
-    if (to === "summary")   session.pauseSession();
+    if (to === "summary")   session.finishSession();
     if (to === "dashboard") session.resetSession();
     setScreen(to);
   }
@@ -57,8 +57,13 @@ export default function App() {
         fullHistory={session.fullHistory}
         goodCount={session.goodCount}
         badCount={session.badCount}
+        sessionId={session.sessionId}
+        startedAt={session.startedAt}
+        endedAt={session.endedAt}
+        elapsed={session.elapsed}
         elapsedFmt={session.elapsedFmt}
         distance={session.distance}
+        mode={mode}
         onNavigate={navigate}
       />
     );

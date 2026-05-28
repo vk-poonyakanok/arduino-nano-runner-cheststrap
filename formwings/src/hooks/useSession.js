@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+function makeSessionId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  const bytes = typeof crypto !== "undefined" && crypto.getRandomValues
+    ? crypto.getRandomValues(new Uint8Array(16))
+    : Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function useSession() {
+  const [sessionId, setSessionId] = useState(makeSessionId);
+  const [startedAt, setStartedAt] = useState(null);
+  const [endedAt,   setEndedAt]   = useState(null);
   const [elapsed,  setElapsed]  = useState(0);
   const [distance, setDistance] = useState(0);
   const [running,  setRunning]  = useState(false);
@@ -14,8 +28,15 @@ export function useSession() {
   const timerRef    = useRef(null);
   const lastPktTs   = useRef(null);
   const lastWindowId = useRef(null);
+  const startedAtRef = useRef(null);
 
   const startSession = useCallback(() => {
+    if (!startedAtRef.current) {
+      const now = new Date().toISOString();
+      startedAtRef.current = now;
+      setStartedAt(now);
+      setEndedAt(null);
+    }
     setRunning(true);
   }, []);
 
@@ -23,13 +44,25 @@ export function useSession() {
     setRunning(false);
   }, []);
 
+  const finishSession = useCallback(() => {
+    setRunning(false);
+    const now = new Date().toISOString();
+    setEndedAt(now);
+    return now;
+  }, []);
+
   const resetSession = useCallback(() => {
     clearInterval(timerRef.current);
+    const nextSessionId = makeSessionId();
     elapsedRef.current      = 0;
     historyRef.current      = [];
     fullHistoryRef.current  = [];
     lastPktTs.current       = null;
     lastWindowId.current    = null;
+    startedAtRef.current    = null;
+    setSessionId(nextSessionId);
+    setStartedAt(null);
+    setEndedAt(null);
     setElapsed(0);
     setDistance(0);
     setHistory([]);
@@ -80,9 +113,10 @@ export function useSession() {
   };
 
   return {
+    sessionId, startedAt, endedAt,
     elapsed, elapsedFmt: fmt(elapsed),
     distance, running,
     history, fullHistory, goodCount, badCount,
-    startSession, pauseSession, resetSession, recordPacket,
+    startSession, pauseSession, finishSession, resetSession, recordPacket,
   };
 }

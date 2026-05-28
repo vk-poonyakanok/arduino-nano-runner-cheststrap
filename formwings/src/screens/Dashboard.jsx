@@ -504,7 +504,7 @@ export function Dashboard({ mode, setMode, bleLatest, bleStatus, onNavigate, ses
 
           {/* Stop / End button */}
           <button
-            onClick={() => { session.pauseSession(); onNavigate("summary"); }}
+            onClick={() => onNavigate("summary")}
             className="w-12 h-12 rounded-full border-none cursor-pointer flex items-center justify-center bg-[#FF3333] text-white hover:opacity-90 font-black text-[13px]"
             title="End Run"
           >

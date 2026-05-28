@@ -1,5 +1,15 @@
 # FormWings Changelog
 
+## [0.2.3] - 2026-05-29
+
+### Supabase Session Upload
+- Added Supabase client wiring via `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`
+- Added post-run session upload from Summary with local queue fallback and retry
+- Added `athlete_sessions` migration for session summaries plus full packet history JSONB
+- Session tracking now carries `sessionId`, `startedAt`, and `endedAt`
+
+---
+
 ## [0.2.2] — 2026-05-28
 
 ### BLE Data Contract — New Payload Format
